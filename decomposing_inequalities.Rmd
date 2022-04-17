@@ -1,0 +1,569 @@
+---
+title: "Decomposing dimensions of mortality inequality"
+author: 
+- Monica Alexander^[\texttt{monica.alexander@utoronto.ca}.]
+thanks: "Thanks to Rohan Alexander and Lisa Strug for critical contributions."
+date: "Statistical Sciences and Sociology, University of Toronto "
+output: 
+  bookdown::pdf_document2: 
+    toc: false
+  number_sections: true
+  latex_engine: xelatex
+  
+fontsize: 12pt
+header-includes:
+- \usepackage{setspace}
+- \onehalfspacing
+bibliography: decomp.bib
+abstract: "This paper demonstrates how an existing mathematical decomposition technique can be used to understand mortality inequalities across populations. The use of Singular Value Decomposition to extract key mortality patterns by age and respective relative weights across populations is discussed. This method is demonstrated through decompositing mortality by US state to highlight the main dimensions of mortality inequalities, and finds: 1) that majority of differences in mortality age schedules across states in recent years is due to differences in young-adult mortality; and 2) that relatively high-mortality states have evolved in a fundamentally different way to low-mortality states over time. This decomposition approach is complementary to existing methods to describe and summarize mortality patterns, focusing on key dimensions of mortality differences."
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(patchwork)
+lt_male <- read_csv("lt_male.csv")
+lt_female <- read_csv("lt_female.csv")
+```
+
+\newpage
+# Introduction
+
+Life expectancy at birth is an essential demographic measure for monitoring mortality progress. It is reported and studied by demographers, UN agencies, and journalists alike, is an important indicator of development, and has recently gained attention as the effects of COVID-19 saw widespread declines in life expectancy [@aburto2022quantifying]. Substantial gains in overall life expectancy have been well-documented, with the famous plot in a paper by Oeppen and Vaupel [@oeppen2002broken] showing seemingly continual increases in the 'best possible' life expectancy over the past 150 years. In more recent research, demographers have shifted to focusing less on overall progress and more on the inequalities that exist in mortality outcomes across populations. For example, much attention has been paid to the observation that life expectancy in the United States is falling further behind that of other high-income countries [@preston2009low; @ho2018recent; @woolf2019life; @bergeron2020diversification; @mehta2020us]. The US ranks last in terms of life expectancy at birth for all high-income countries, despite being around average in the 1980s [@barbieri2019contribution]. 
+
+As well as a disparity compared to other countries, substantial inequalities also exist across states within the US. For instance, we can replicate an Oeppen-Vaupel style plot of highest life expectancy across US states. Figure \@ref(fig:high-low) shows this for females and males, and additionally shows the flip side: states with the lowest life expectancy over time. In terms of states with the highest life expectancy, we can see that life expectancy has been increasing effectively linearly since 1959, with some evidence of a deceleration in improvement in recent years for highest male life expectancy. However, turning to states with the lowest life expectancy, the trend is not so linear, and the recent deceleration in improvement is much more marked and even decreased in recent years. The implication is one of inequality: there is evidence of a stagnation in mortality improvement in recent years, but this is more pronounced in those populations who were relatively disadvantaged in the first place. 
+
+
+
+```{r high-low, fig.cap="US States with highest and lowest life expectancy, 1959-2019", fig.height = 4}
+hl_male <- lt_male %>% 
+  filter(Age==0) %>% 
+  select(PopName:Year, ex) %>% 
+  group_by(Year) %>% 
+  arrange(Year, -ex) %>% 
+  filter(row_number()==1|row_number()==n()) %>% 
+  mutate(no = 1:2) %>% 
+  mutate(type = ifelse(no ==1, "high", "low")) %>% 
+  select(-no) 
+
+hl_female <- lt_female %>% 
+  filter(Age==0) %>% 
+  select(PopName:Year, ex) %>% 
+  group_by(Year) %>% 
+  arrange(Year, -ex) %>% 
+  filter(row_number()==1|row_number()==n()) %>% 
+  mutate(no = 1:2) %>% 
+  mutate(type = ifelse(no ==1, "high", "low"))%>% 
+  select(-no) %>% 
+  mutate(Sex = "f")
+
+hl_male %>% 
+  bind_rows(hl_female) %>% 
+  mutate(Sex = ifelse(Sex=="m", "Male", "Female")) %>% 
+  ggplot(aes(Year, ex, label = PopName, color = PopName)) + 
+  geom_text(size = 2.5) + facet_grid(~Sex) + 
+  theme_bw()+
+    theme(legend.position = "none")+
+  labs(y = "Life expectancy at birth (years)")
+
+```
+
+
+Turning to a summary measure of variation across all states, Figure \@ref(fig:sd-plot) shows the standard deviation in life expectancy at birth for males and females. In recent years, the standard deviation in life expectancy at birth across US states has been increasing. For females, the standard deviation in life expectancy is the highest it has ever been and has been constantly increasing since about 2000; for males, standard deviation peaked in the 1990s but has been increasing roughly for the past decade. Interpreting Figure \@ref(fig:sd-plot) given what we observe in Figure \@ref(fig:high-low) suggests the increase in variation across states is being driven by a slowdown in improvements in the higher-mortality states.
+
+```{r sd-plot, fig.cap="Standard deviation in life expectancy across US states, 1959-2019", fig.height = 3}
+male_sd <- lt_male %>% 
+  filter(Age==0) %>% 
+  select(PopName:Year, ex) %>% 
+  group_by(Year) %>% 
+  arrange(Year, -ex)  %>% 
+  summarize(male = sd(ex)) 
+
+female_sd <- lt_female %>% 
+  filter(Age==0) %>% 
+  select(PopName:Year, ex) %>% 
+  group_by(Year) %>% 
+  arrange(Year, -ex)  %>% 
+  summarize(female = sd(ex)) 
+
+male_sd %>% 
+  left_join(female_sd) %>% 
+  pivot_longer(-Year) %>% 
+  ggplot(aes(Year, value, color = name)) + 
+  geom_line() + 
+  scale_color_brewer(palette = "Set1", name = "sex") + 
+  theme_bw() + 
+  labs(y = "Standard deviations (years)")
+
+```
+
+
+Life expectancy is just that --- an average, or expectation, of the number of years of life given a year's age-specific mortality rates. To fully understand differences in mortality across populations it is generally more instructive to look at mortality patterns across all ages. For example, previous work has decomposed changes in life expectancy by age group, and other dimensions such as cause of death [@masters2018explaining; @woolf2019life], race/ethnicity [@curtin2019mortality; @geronimus2019weathering; @harper2021declining], and socioeconomic status [@ross2012education; @chetty2016association; @currie2016mortality; @barbieri2022socioeconomic]. Referring to Figure \@ref(fig:high-low), note that the states with lowest life expectancy as at 2019 have reached and surpassed the level of life expectancy for the highest states in 1959; so while the gap is still substantial, the higher-mortality states have improved markedly to a level that used to be 'the best' 50 years ago. A natural question to ask is how the higher-mortality states achieved this level of life expectancy, and whether this experience was similar to those lower-mortality states, who achieved the same level many years before. To answer such a question, we need to consider the entire mortality age schedule. But by doing so, we lose the desirable feature of considering just one measure of mortality, which is useful to summarize differences across populations and monitor trends over time. 
+
+In this paper, we demonstrate how existing mathematical decomposition techniques can be used to summarize and understand important dimensions of mortality inequality across populations in an intuitive way. These techniques --- centering on Singular Value Decomposition --- have been commonly used in demography, but for the purposes of estimation in contexts where data are sparse, or projection of mortality (and other demographic rates) into the future. However, these techniques are under-utilized as a way of understanding existing mortality patterns, and how they differ across populations. In particular, we decompose mortality by US state to highlight the main dimensions of mortality inequalities across states, and show: 1) that the majority of differences in mortality age schedules across states in recent years is due to differences in young-adult mortality; and 2) that relatively high-mortality states have evolved in a fundamentally different way to low-mortality states over time. This paper complements existing work on mortality inequalities in the US and responds to the growing need of considering other summary measures above and beyond averages to fully understand mortality inequalities across populations. 
+
+
+# Decomposing mortality differences across populations
+
+The basis of the analysis in the paper is the technique of Singular Value Decomposition (SVD). This section reviews SVD, highlights how it has been utilized in demographic research to date, and discusses how it can potentially be used as a technique to decompose and describe mortality patterns across populations. 
+
+The SVD is as follows. Let \(\bf{X}\) be a
+\(N \times G\) matrix of (possibly de-meaned) log mortality rates, where \(N\) is the
+number of age schedules and \(G\) is the number of age-groups.[^1] The SVD of
+\(\bf X\) is \begin{equation}
+\bf X = \bf{UDV'},
+\end{equation} where \(\bf U\) is a \(N \times N\) matrix, \(\bf D\) is
+a \(N \times G\) matrix and \(\bf V\) is a \(G \times G\) matrix. 
+
+Intuitively, SVD enables the main sources of variation across a set of age-specific mortality curves to be extracted. In particular, the first column of \(\bf V\), called the first right singular vector, gives the patterns by age which explain the most variation across all the mortality schedules. The first column of \(\bf U\) is how much that particular pattern contributed to each mortality schedule \(G\). In a similar way, the second column of  \(\bf V\) gives patterns by age which explain the second-most amount of variation, and so on. As such, SVD is a useful dimensionality reduction technique; if we write the original matrix \(\bf X\) as
+\begin{equation}
+\mathbf{X} = \sum_{i = 1}^G d_i \mathbf{u}_i \mathbf{v}_i^*
+\end{equation}
+then representing \(\bf X\) with just the first singular vectors would be 
+$$
+\mathbf{X} = d_1 \mathbf{u}_1 \mathbf{v}_1^*
+$$
+and so on. In many cases, the vast majority of variation across the original matrix \(\bf X\) is accounted for through the first few singular vectors; in most human mortality settings it seems that the first two or three are usually enough. Additionally, as human mortality age schedules (on the log scale) tend to exhibit a strong characteristic 'J' shape over age, the SVD is often done on de-meaned log mortality curves. For example, the Lee-Carter mortality forecasting model is 
+$$
+\log m_{x,t} = a_x + b_xk_t
+$$
+where $a_x$ is a mean mortality age schedule, $b_x$ can be interpreted as age-specific deviations away from the mean, and $k_t$ is the magnitude of those deviations for a particular year. The $a_x$ is taken out of the age-time matrix \(\bf X\) before the SVD is undertaken. The age-specific deviations $b_x$ is the first right singular vector $\mathbf{v}_1$ and the weights $k_t$ are derived from standardizing $\mathbf{u}_1$ by $d_1$.
+
+[^1]: For example, in a Lee-Carter model, \(N\) would refer to the number of years being used to train the model. 
+
+
+The Lee-Carter model is the most famous application of SVD in demography [@lee1992modeling]. It reduces the problem of modeling variation across two dimensions (age and time) into two separable age and time components. The pattern of variation across age is fixed, but the magnitude of this variation varies over time. The goal of this model is projection, so the original set of age schedules of interest (in \(\bf X\)) are ones over time. 
+
+Since the original Lee-Carter model was formulated in 1992, there have been numerous applications, extensions, and variants proposed [e.g. @lee2000lee; @renshaw2003lee; @li2005coherent]. Lee-Carter approaches have been applied to forecast demographic indicators other than mortality [@wisniowski2015bayesian]; to cohort based rates [@cohortlc2022]; and to cause-specific mortality [@girosi2018demographic]. The Lee-Carter approach has also inspired work in small area estimation, where noisy mortality age schedules are modeled with a reduced set of components and smoothed over time [@alexander2017flexible; @alexander2021bayesian]. Other more recent techniques, such as TOPALS and variants, have strong parallels to the Lee-Carter approach (standard mortality schedule + deviations over time and space) [@de2011new; @gonzaga2016estimating].
+
+In addition to the goal of forecasting demographic rates, SVD has also been used to aid in mortality estimation in contexts where data are limited. For example, Clark [-@clark2019general] proposes the SVD-Comp model, which allows full age-specific mortality curves to be estimated from a measure of child mortality (or child and adult mortality). The SVD-Comp model is based on components derived from an SVD of mortality rates from high-quality HMD data. This method has been applied to many data limited contexts, including populations with high HIV prevalence [@svdcomphiv].
+
+## Using decomposition to obtain summary measures of mortality differences
+
+The technique of SVD is arguably well-suited to problems in demography (particularly, mortality), because of the strong regularities in mortality patterns displayed across a wide range of populations over time. Because of this, variation in mortality can be efficiently reduced and understood in a few key dimensions. Despite the large body of work in projection and estimation, very little work utilizes the strength of SVD as a way of producing summary indicators of mortality across populations. By definition, the first right singular vector tells us the main source of variation across a set of age-specific mortality curves. We are used to thinking about this in terms of time, but a SVD can equally be applied to a matrix of age-specific mortality curves across populations. For example, consider a matrix \(\bf X\) which consists of the demeaned log age-specific mortality rates for all US states and DC in a particular year. In this case, we have \(N = 51\) states (and DC) and \(G = 110\) single year ages. If we denote $a_x$ as the mean mortality schedule over states, then the logged age specific mortality rates for a particular age $x$ and state $s$ could be represented as 
+\begin{equation}
+\log m_{x,s} = a_x + b_xk_s
+\end{equation}
+The term $b_x$ gives the age-specific deviations away from the mean, and the term $k_s$ gives the magnitude of those deviations for a particular state $s$. We can use this representation as a tool to understand differences in mortality age patterns across populations, focusing on just two parameters: $b_x$ and $k_s$. This descriptive model could be extended to include higher order terms, for example
+\begin{equation}
+\log m_{x,s} = a_x + b_{x,1}k_{s,1} + b_{x,2}k_{s,2}.
+\end{equation}
+This modeling approach is not new, but rather the aim of this paper is advocate for a shift in focus from estimation to understanding, and for utilizing the power of SVD in generating summary measures to describe mortality differences across populations. 
+
+# Decomposing dimensions of US mortality
+
+This section illustrates how SVD can be used to decompose differences in mortality experiences across US states. Firstly, key mortality differences in 2019 are illustrated, and secondly, key mortality differences at a fixed level of life expectancy are highlighted. 
+
+## Data and calculations
+
+Data used in the following examples were obtained from the Human Mortality Database's United States Mortality database [@barbier2019united]. This dataset is free and publicly available[^2] and aims to provide detailed mortality and population data on state-level mortality trends and geographic variations in the length of life within the United States. Estimates are developed to the same high-quality methodology as the Human Mortality Database. The dataset contains lifetable indicators for all US states and DC for the years 1959-2019. Estimates are produced for every year and single age group up to the open-age 110+. 
+
+For the purposes of the following analyses, estimate of the age-specific mortality and life expectancy at birth were utilized. In particular, the age-specific mortality rates were used as a basis for the SVD. Before the decomposition was performed, the age-specific mortality rates were logged and smoothed, using a LOESS function with a span of 0.2. The smoothing was done as a pre-processing step to ensure the components extracted from the decomposition were also relatively smooth.[^3] 
+
+The SVD process was carried out on matrices of smoothed, de-meaned, logged age-specific mortality rates for the set of populations of interest. The calculations were done in R using the `loess` and `svd` functions. All plots were generated using `ggplot` within the `tidyverse` package [@tidyverse]. Code is available within a R markdown version of this paper which is available here: https://github.com/MJAlexander/mortality-inequality-decomposition. 
+
+
+[^2]: https://usa.mortality.org/ 
+[^3]: Results from a decomposition on unsmoothed rates showed much the same results.
+
+## Recent inequalities
+
+
+
+```{r }
+mxs <- lt_male %>% 
+  filter(Year==2019) %>% 
+  select(PopName, Age, mx) %>% 
+  mutate(mx = ifelse(mx==0, 0.00002, mx)) %>% 
+  mutate(Age = as.numeric(Age)) %>% 
+  drop_na()
+
+models <- mxs %>%
+  mutate(log_mx = log(mx)) %>% 
+  select(-mx) %>% 
+  tidyr::nest(data = c(Age, log_mx)) %>%
+  dplyr::mutate(
+    m = purrr::map(data, loess,
+                   formula = log_mx ~ Age, span = 0.2),
+    # Retrieve the fitted values from each model
+    fitted = purrr::map(m, `[[`, "fitted")
+  )
+
+# Apply fitted y's as a new column
+results <- models %>%
+  dplyr::select(-m) %>%
+  tidyr::unnest(cols = c(data, fitted))
+
+log_mx <- results %>% 
+  select(-log_mx) %>% 
+  pivot_wider(names_from = "Age", values_from = "fitted") %>% 
+  select(-PopName) %>% 
+  as.matrix()
+
+ax <- apply(log_mx, 2, mean)
+
+log_mx_dm <- matrix(NA, nrow = nrow(log_mx), ncol = ncol(log_mx))
+for(i in 1:nrow(log_mx_dm)){
+  log_mx_dm[i,] <- log_mx[i, ] - ax
+}
+
+svd_mx <- svd(log_mx_dm)
+pcs <-svd(log_mx_dm)$v[,1:5]
+
+states <- mxs %>% 
+  pivot_wider(names_from = "Age", values_from = "mx") %>% 
+  select(PopName) %>% 
+  pull()
+
+
+
+```
+
+This section presents results of a decomposition of US mortality by state in 2019. Figure \@ref(fig:pcs-2019) shows the first and second dimensions of de-meaned log mortality differences for the male population across states in 2019. These are like the $b_{x,1}$ and $b_{x,2}$ in Equation 4. The first dimension gives insights in the overall differences in mortality levels: biggest differences occur at the younger ages, and gradually increase as age increases. It captures an overall level of moving the mean age mortality curve up or down. The second dimension provides a bit more insight into how the mortality patterns differ in shape. In particular, it suggests that there is notable variation in mortality curves in terms of young adult mortality.
+
+
+```{r pcs-2019, fig.height=3, fig.cap = "First and second right singular vectors, US mortality by state, Males, 2019"}
+pc1 <- tibble(pcs[,1]) %>% 
+  rename(pc = `pcs[, 1]`) %>% 
+  mutate(age =1:n()) %>% 
+  ggplot(aes(age, pc)) + geom_line()+
+  labs(y = "value", title = "First dimension")+
+  geom_hline(yintercept = 0)+
+  theme_bw()
+#ggsave("~/Desktop/pc2.pdf", width = 6, height = 4)
+
+pc2 <- tibble(pcs[,2]) %>% 
+  rename(pc = `pcs[, 2]`) %>% 
+  mutate(age =1:n()) %>% 
+  ggplot(aes(age, pc)) + geom_line()+
+  labs(y = "value", title = "Second dimension")+
+  geom_hline(yintercept = 0)+
+  theme_bw()
+
+pc1+pc2
+```
+
+The two dimensions of mortality disparities can be further understood when taken in combination with the loadings by state. Figure \@ref(fig:loadings-2019) shows the loadings by state on each of the two components for the male population. These are the $k_1$ and $k_2$ in Equation 4. Looking at the loadings of the first component, states are roughly ordered by overall mortality conditions: low-mortality states (with high life expectancies) tend to be at the top, whereas high-mortality states tend to be at the bottom of the chart. Indeed, as shown in Appendix \ref{e0-loading-compare}, there is a strong correlation between overall life expectancy and note that loadings that are positive on the first dimension suggest mortality rates that are lower than average, and vice versa. 
+
+Turning to the loadings on the second component, note that there is no clear correlation with the first component loadings. Indeed, there is a group of states at the top of the graph which have positive loadings on the second component, even though the loading on the first dimension indicates low overall mortality. The interpretation of this is that these states have mortality curves that are twisted, such that young adult mortality is relatively high (even though child mortality is relatively low). It is interesting to note that this group of states are clustered in New England, whereas the next group of states are Western. This is consistent with relatively high rates of opioid and other drug overdose mortality, which has disproportionately affected the Eastern states [@kiang2019assessment]. Thus, while overall mortality conditions are low in these states, the level of premature mortality is high. At the other end of the graph, we can similarly separate out states geographically based on the loading of the second dimension: states in the Appalachia are inherently different from Southern states. This is consistent with previous research [@monnat2018factors; @kiang2019assessment], but the power of these decompositions is the ability to visualize these patterns by considering only two dimensions.  Note that results of the decomposition for females are similar (see Appendix \ref{female-2019}).
+
+```{r loadings-2019, fig.height = 8, fig.cap = "Loadings on first (low overall mortality) and second components (high young-adult mortality), Males, 2019"}
+p1 <- tibble(svd_mx$u[,1:1]) %>% 
+  mutate(state = states) %>% 
+  rename(first = `svd_mx$u[, 1:1]`) %>% 
+  mutate(state = fct_reorder(factor(state), first)) 
+#ggsave("~/Desktop/loadings.pdf", width = 5, height = 10)
+
+p2 <- tibble(svd_mx$u[,2]) %>% 
+  mutate(state = states) %>% 
+  rename(second = `svd_mx$u[, 2]`) 
+
+p1 %>% 
+  left_join(p2) %>% 
+  mutate(state = fct_reorder(factor(state), first)) %>% 
+  pivot_longer(-state) %>% 
+  ggplot(aes(state, value, fill = name)) + 
+    geom_bar(stat = "identity", position = 'dodge') + 
+  coord_flip()+
+  scale_fill_brewer(palette = "Set1", name = "component")+
+  theme_bw()
+```
+
+
+## Decomposition at fixed life expectancy
+
+The previous section presented a decomposition of age-specific mortality across US states for a particular year. We know that there are substantial differences in mortality conditions across states, and the decomposition was useful to highlight key differences in the dimensions of mortality variation. In this section, rather than fixing the year of analysis, we shift the focus to fixing the level of mortality (as defined by the level of life expectancy).
+
+As seen in Figure \@ref(fig:high-low), despite large disparities across states, mortality conditions have generally improved over the past 50 years. Regardless of whether we are looking at the best or worst performing states, or males or females, life expectancy at birth has increased at least 7 years over the period 1959-2019. Overall mortality improvement during this period is generally described broadly as a consequence of substantial declines in cardiovascular mortality [@mokdad2018state]. Cardiovascular mortality peaked in 1950 and began to decline rapidly by the mid-1960s, falling roughly by half from 1960 to 1990. Aggregate mortality fell by one-third from 1950 to 1990, with nearly all of that decline attributable to cardiovascular diseases and more than half to heart disease alone [@model2016mortality]. Since 1990, improvements in these causes continue; for example, the age-standardized death rate due to ischemic heart disease declined 50% over the period 1990-2016 [@mokdad2018state].
+
+These observations are true for deaths for the nation as a whole, but what about the trajectories of individual states with varying mortality experiences? Do relatively low performing states evolve in the same way that high performing states did, decades before? To investigate this question, we illustrate the decompositions of age-specific mortality curves at fixed life expectancy at birth.
+
+Here, we consider decomposition of male mortality curves with a life expectancy roughly equal to 75 years. Hawaii, the highest performing state, reached this level of life expectancy around 1980, whereas the lowest performing states (for example, Missouri, Alabama, and West Virginia) are yet to reach this level. For the purposes of this analysis any states where the closest life expectancy is greater than one year different to 75 years is removed. The result is a data set of 43 states (Table \@ref(tab:e0-table)). Hawaii reached a male life expectancy around 75 in 1985, whereas Missouri achieved this level almost 30 years later in 2014. 
+
+
+```{r}
+
+years_to_get <- lt_male %>% 
+  select(PopName:Age, ex) %>% 
+  filter(Age==0) %>% 
+  mutate(diff = abs(ex - 75)) %>% 
+  arrange(PopName, diff) %>% 
+  group_by(PopName) %>% 
+  slice(1) %>% 
+  arrange(-diff) %>% 
+  filter(diff<1)
+
+mxs <- lt_male %>% 
+  select(PopName:Age, mx)  %>% 
+  right_join(years_to_get %>% select(PopName, Year)) %>% 
+  mutate(mx = ifelse(mx==0, 0.00002, mx)) %>% 
+  mutate(Age = as.numeric(Age)) %>% 
+  drop_na()
+
+models <- mxs %>%
+  mutate(log_mx = log(mx)) %>% 
+  select(-mx) %>% 
+  tidyr::nest(data = c(Age, log_mx)) %>%
+  dplyr::mutate(
+    m = purrr::map(data, loess,
+                   formula = log_mx ~ Age, span = 0.2),
+    # Retrieve the fitted values from each model
+    fitted = purrr::map(m, `[[`, "fitted")
+  )
+
+# Apply fitted y's as a new column
+results <- models %>%
+  dplyr::select(-m) %>%
+  tidyr::unnest(cols = c(data, fitted))
+
+log_mx <- results %>% 
+  select(-log_mx, -Sex, -Year) %>% 
+  pivot_wider(names_from = "Age", values_from = "fitted") %>% 
+  select(-PopName) %>% 
+  as.matrix()
+
+ax <- apply(log_mx, 2, mean)
+
+log_mx_dm <- matrix(NA, nrow = nrow(log_mx), ncol = ncol(log_mx))
+for(i in 1:nrow(log_mx_dm)){
+  log_mx_dm[i,] <- log_mx[i, ] - ax
+}
+
+svd_mx <- svd(log_mx_dm)
+pcs <-svd(log_mx_dm)$v[,1:5]
+
+
+states <- unique(results$PopName)
+
+```
+
+```{r e0-table}
+years_to_get <- lt_male %>% 
+  select(PopName:Age, ex) %>% 
+  filter(Age==0) %>% 
+  mutate(diff = abs(ex - 75)) %>% 
+  arrange(PopName, diff) %>% 
+  group_by(PopName) %>% 
+  slice(1) %>% 
+  arrange(-diff) %>% 
+  filter(diff<1)
+
+years_to_get %>% 
+  select(PopName, Year, ex) %>% 
+  arrange(Year) %>% 
+  rename(State = PopName, `Life expectancy (years)` = ex) %>% 
+  kableExtra::kable(booktabs = TRUE, caption ="Male life expectancies around 75 and the year they were obtained") %>% kableExtra::kable_styling(position = "center", font_size = 10)
+```
+
+To investigate differences in age-specific patterns, we can do a decomposition of the age-specific mortality rates corresponding to the years shown in Table \@ref(tab:e0-table); i.e. now the \(\bf X\) matrix is \(N \times G\) with \(N = 43\) and \(G = 110\). The resulting first two dimensions of mortality difference (i.e., the first two right singular vectors) are plotted in Figure \@ref(fig:e075-pc). The first dimension suggests the main differences across mortality curves occur at young ages (<10) and in middle age (35-65 years). In particular, this dimension suggests that curves with relatively low young age mortality are more likely to have higher than average middle age mortality, and vice versa. The second dimension suggests differences in young adult mortality and older-age mortality, with mortality curves that have relatively low young adult mortality are more like to have higher than average old-age mortality, and vice versa. 
+
+
+```{r e075-pc, fig.height=3, fig.cap = "First and second right singular vectors, US states with male life expectancy around 75"}
+pc1 <- tibble(pcs[,1]) %>% 
+  rename(pc = `pcs[, 1]`) %>% 
+  mutate(age =1:n()) %>% 
+  ggplot(aes(age, pc)) + geom_line()+
+  labs(y = "value", subtitle = "Mortality curves with e0 = 75", title = "First dimension")+
+  geom_hline(yintercept = 0)+
+  theme_bw()
+#ggsave("~/Desktop/pc2.pdf", width = 6, height = 4)
+
+pc2 <- tibble(pcs[,2]) %>% 
+  rename(pc = `pcs[, 2]`) %>% 
+  mutate(age =1:n()) %>% 
+  ggplot(aes(age, pc)) + geom_line()+
+  labs(y = "value", subtitle = "Mortality curves with e0 = 75", title = "Second dimension")+
+  geom_hline(yintercept = 0)+
+  theme_bw()
+pc1+pc2
+```
+
+As before, it is useful to understand these components of mortality differences in combination with the loadings on each component by state. Figure \@ref(fig:e075-loadings) plots the loadings on each of the two components for each state, versus the year at which the male life expectancy of 75 was reached. These plots clearly show correlations between mortality patterns of a certain time and the year the target was reached. For the first component, there is a positive correlation, and states that reached a life expectancy of 75 relatively early are more likely to have a negative loading on this component. For the second component, the opposite is true: states that reached a life expectancy of 75 relatively early are more likely to have a positive loading on this component. This means that states who achieved this life expectancy early were more likely to have relatively low young-adult and middle-age adult mortality; whereas states who achieved the target later were more likely to have relatively low child- and old-age mortality. The implication is that mortality conditions in states across the US have evolved differently over time. 'Early achievers' had improvements focused in the adult mortality age groups, whereas the later achievers had improvements focused on young- and older-age mortality.
+
+
+```{r e075-loadings, fig.cap = "Loadings on first and second component for states with male life expectancy around 75 years", fig.height = 4}
+pc1_years <- tibble(svd_mx$u[,1:1]) %>% 
+  mutate(state = states) %>% 
+  rename(pc = `svd_mx$u[, 1:1]`) %>% 
+  mutate(state = fct_reorder(factor(state), pc)) %>% 
+  left_join(years_to_get %>% select(PopName, Year) %>% rename(state = PopName)) %>% 
+  rename(first = pc)
+
+
+pc2_years <- tibble(svd_mx$u[,2]) %>% 
+  mutate(state = states) %>% 
+  rename(pc = `svd_mx$u[, 2]`) %>% 
+  mutate(state = fct_reorder(factor(state), pc)) %>% 
+  left_join(years_to_get %>% select(PopName, Year) %>% rename(state = PopName)) %>% 
+  rename(second = pc)
+
+pc1_years %>% 
+  left_join(pc2_years) %>% 
+  pivot_longer(-(state:Year)) %>% 
+  ggplot(aes(Year, value, label = state, color = name)) + 
+  geom_text()+
+  facet_wrap(~name)+
+  #geom_smooth(method = "lm")+
+  theme_bw()+
+  theme(legend.position = "none")+
+  labs(y = "loading")+
+  scale_fill_brewer(palette = "Set1")
+
+```
+
+
+
+# Discussion
+
+This paper discussed a decomposition technique to produce summary measures of differences in mortality age patterns across populations. The method centers on using Singular Value Decomposition (SVD) on a set of mortality curves from populations of interest. The result of the SVD process is a set (one or more) of components by age, which show the main differences across populations, and a set of loadings which shows the relative importance of each of the components for each population. SVD is already an established technique in demography, as one of its main advantages is that complex, non-linear patterns (as is the case with age-specific mortality curves) can be well-captured by only a small number of parameters. This has previously been utilized in problems of demographic forecasting and estimation, where the reduced set of parameters produced by SVD vastly simplify the modeling process while maintaining key characteristics of mortality across age. This paper illustrated the power of the method in the context of decomposition for understanding, and to describe existing mortality inequalities across populations with a small number of parameters. 
+
+The utility of this decomposition technique was illustrated on US mortality across states in two particular examples. In the first example, the decomposition was performed on age-specific mortality curves by state (and DC) in 2019. The resulting first dimension of mortality difference illustrated differences in overall mortality, with states with relatively high life expectancy (such as California, Hawaii and Massachusetts) having the highest loadings, and states with relatively low life expectancy (such as Mississippi, Alabama, and Louisiana) at the opposite end of the rankings. In comparison, the second component of the decomposition highlights key differences in the shape of the mortality curves. In particular, there are substantial differences in the level of young-adult mortality, with states in New England and the Appalachia, who have been hardest hit by the opioid epidemic, having relatively high loadings on this component. 
+
+In the second part of the analysis, rather than decomposing mortality patterns at a fixed year, we performed the decomposition at a fixed level of overall mortality, as shown for a male life expectancy of around 75 years. The results of the decomposition showed that there is a strong relationship between the shape of age-specific mortality and the year at which the target level of life expectancy was reached. In particular, taken together, Figures  \@ref(fig:e075-pc) and \@ref(fig:e075-loadings) show that states that achieved the target level early have relatively low young- and middle-age adult mortality, whereas states that achieved the target late have relatively low child- and old-age mortality. The interpretation is that, while the 'early achievers' had reductions most likely due to declines in cardiovascular mortality and other lifestyle-related factors, the 'later achievers' rely on improvements at young and old age groups, which are most likely more related to medical advancements and improvements in healthcare [@harper2021declining]. Indeed, the observation that young-adult mortality in particular is still relatively high in these states is particularly telling in terms of inequalities in mortality due to largely preventable causes, such as drug overdoses, suicides, homicides, and other accidents [@tilstra2021trends]. 
+
+
+The examples discussed in the paper considered two components and their corresponding loadings, which captured the majority (>80%) of the variance across the mortality curves. Depending on the context and population of interest to study, the decomposition could be extended to consider more than components, or just the first component. Because human mortality tends to display strong regularities over age, once the (logged) age-specific mortality curves have been de-meaned, it's likely that the majority of variation will be captured in the first 2-4 components, with the remaining components largely relating to noise. 
+
+We view this decomposition approach as complementary to existing methods to describe and summarize mortality patterns. Recent work has highlighted the need to not only consider life expectancy as an indicator mortality progress, but also other measures that bring to light more the inequalities within and across populations. For instance, @van2018case discuss recent trends in lifespan variation, how these differ across socio-economic dimensions, and argue that monitoring this type of indicator contains additional information to life expectancy. In the context of COVID-19, other research has reported on length of life lost [@goldstein2020demographic]. The decomposition measures are another useful indicator to describe mortality inequalities, which could be reported in conjunction with other summary measures, or as a precursor to a more detailed cause-specific analysis. The example presented here was by US geography, but the method could equally be applied across countries, within countries at a smaller geographic level, or across race/ethnicity lines.
+
+A limitation of the examples shown here is that the data used from the Human Mortality Database to date has only been published up to 2019. As such none of the analysis contained in this paper includes or relates to mortality due to COVID-19. The recent pandemic has changed our perspective on mortality improvements and disparities across populations. Before COVID-19, a decrease in life expectancy in high-income countries in particular was so surprising and rare to see, but was a common occurrence in 2020 as a consequence of COVID-19 [@aburto2022quantifying]. Many of these have since rebounded [@schoeley2022bounce], but it remains unclear how both overall mortality conditions and age-specific mortality patterns will be affected in the short- and long-term. However, this decomposition method could be applied to relevant data to gain insights into the affect of the pandemic to date. 
+
+In recent years, demographers have shifted focus from understanding outcomes 'on average' to thinking more about inequalities that exist within and across populations. These new questions call for a shift in our methodologies, both for estimation and projection purposes, but also for descriptive and understanding purposes. This paper illustrated how an existing decomposition method in demography can be refocused and used in a new way, to summarize key dimensions of mortality inequality. It is a useful addition to the demographer's methodological toolkit, which continues to evolve, as does the data we use, and the questions we ask. 
+
+
+\newpage
+\appendix
+
+# Comparing loadings on the first dimension to life expectancy in 2019 \label{e0-loading-compare}
+
+Figure \@ref(fig:scatter-comp) plots the relationship between life expectancy at birth by US state and the loading on the first component of the Singular Value Decomposition. There is a clear positive correlation, suggesting the first component captures the over level of mortality well.
+
+```{r scatter-comp, fig.height = 4, fig.cap = "Relationship between male life expectancy at birth in 2019 and loading on the first singular vector"}
+# lt_male %>% 
+#   filter(Age==0, Year==2019) %>% 
+#   select(PopName, ex) %>% 
+#   rename(state = PopName, e0 = ex) %>% 
+#   left_join(p1 %>% rename(loading = first)) %>% 
+#   mutate(state = fct_reorder(factor(state), loading)) %>% 
+#   pivot_longer(-state) %>% 
+#   ggplot(aes(state, value, fill = name)) + facet_wrap(~name, scales = "free_x")+
+#   coord_flip() + 
+#   geom_point()+
+#   theme_bw()
+
+lt_male %>% 
+  filter(Age==0, Year==2019) %>% 
+  select(PopName, ex) %>% 
+  rename(state = PopName, e0 = ex) %>% 
+  left_join(p1 %>% rename(loading = first)) %>% 
+  ggplot(aes(loading, e0, label = state)) + geom_text() + 
+  theme_bw()
+```
+
+
+
+\newpage
+# Female mortality in 2019 \label{female-2019}
+
+The two plots below replicate the analysis presented in Section 3.2 but for the female population. Both the first and second components and corresponding loadings show similar trends to the male population. 
+
+
+```{r }
+mxs <- lt_female %>% 
+  filter(Year==2019) %>% 
+  select(PopName, Age, mx) %>% 
+  mutate(mx = ifelse(mx==0, 0.00002, mx)) %>% 
+  mutate(Age = as.numeric(Age)) %>% 
+  drop_na()
+
+models <- mxs %>%
+  mutate(log_mx = log(mx)) %>% 
+  select(-mx) %>% 
+  tidyr::nest(data = c(Age, log_mx)) %>%
+  dplyr::mutate(
+    m = purrr::map(data, loess,
+                   formula = log_mx ~ Age, span = 0.2),
+    # Retrieve the fitted values from each model
+    fitted = purrr::map(m, `[[`, "fitted")
+  )
+
+# Apply fitted y's as a new column
+results <- models %>%
+  dplyr::select(-m) %>%
+  tidyr::unnest(cols = c(data, fitted))
+
+log_mx <- results %>% 
+  select(-log_mx) %>% 
+  pivot_wider(names_from = "Age", values_from = "fitted") %>% 
+  select(-PopName) %>% 
+  as.matrix()
+
+ax <- apply(log_mx, 2, mean)
+
+log_mx_dm <- matrix(NA, nrow = nrow(log_mx), ncol = ncol(log_mx))
+for(i in 1:nrow(log_mx_dm)){
+  log_mx_dm[i,] <- log_mx[i, ] - ax
+}
+
+svd_mx <- svd(log_mx_dm)
+pcs <-svd(log_mx_dm)$v[,1:5]
+
+states <- mxs %>% 
+  pivot_wider(names_from = "Age", values_from = "mx") %>% 
+  select(PopName) %>% 
+  pull()
+
+
+
+```
+
+```{r, pcs-2019-female, fig.height=3, fig.cap = "First and second right singular vectors, US mortality by state, Females, 2019"}
+pc1 <- tibble(pcs[,1]) %>% 
+  rename(pc = `pcs[, 1]`) %>% 
+  mutate(age =1:n()) %>% 
+  ggplot(aes(age, pc)) + geom_line()+
+  labs(y = "value", title = "First dimension")+
+  geom_hline(yintercept = 0)+
+  theme_bw()
+#ggsave("~/Desktop/pc2.pdf", width = 6, height = 4)
+
+pc2 <- tibble(pcs[,2]) %>% 
+  rename(pc = `pcs[, 2]`) %>% 
+  mutate(age =1:n()) %>% 
+  ggplot(aes(age, pc)) + geom_line()+
+  labs(y = "value", title = "Second dimension")+
+  geom_hline(yintercept = 0)+
+  theme_bw()
+
+pc1+pc2
+```
+
+```{r loadings-2019-female, fig.height = 8, fig.cap = "Loadings on first (low overall mortality) and second components (high young-adult mortality), Females, 2019"}
+p1 <- tibble(svd_mx$u[,1:1]) %>% 
+  mutate(state = states) %>% 
+  rename(first = `svd_mx$u[, 1:1]`) %>% 
+  mutate(state = fct_reorder(factor(state), first)) 
+#ggsave("~/Desktop/loadings.pdf", width = 5, height = 10)
+
+p2 <- tibble(svd_mx$u[,2]) %>% 
+  mutate(state = states) %>% 
+  rename(second = `svd_mx$u[, 2]`) 
+
+p1 %>% 
+  left_join(p2) %>% 
+  mutate(state = fct_reorder(factor(state), first)) %>% 
+  pivot_longer(-state) %>% 
+  filter(state!="DC") %>% 
+  ggplot(aes(state, value, fill = name)) + 
+    geom_bar(stat = "identity", position = 'dodge') + 
+  coord_flip()+
+  scale_fill_brewer(palette = "Set1", name = "component")+
+  theme_bw()
+```
+
+\newpage
+
+# References
